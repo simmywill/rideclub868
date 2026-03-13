@@ -1,18 +1,37 @@
 # rideclub868
 
-Homepage is set to the provided bicycle intro animation at route `/`.
+Production-ready bicycle booking app with:
 
-## Run locally
+- Animated customer homepage at `/`
+- Secure admin login at `/admin`
+- Express API with HttpOnly cookie auth
+- Postgres-backed bookings and inventory
+
+## Local development
 
 1. Install dependencies:
    `npm install`
-2. Start dev server:
+2. Copy `.env.example` to `.env` and set your real values.
+3. Start the API:
+   `npm run dev:server`
+4. In a second terminal, start the frontend:
    `npm run dev`
-3. Open the URL shown in terminal.
+5. Open:
+   `http://localhost:5173`
 
-## Routes
+## Production environment variables
 
-- `/` - Animated bicycle booking homepage
-- `/availability` - Availability page
-- `/fleet` - Fleet page
-- `/booking` - Booking page
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+
+## Render production shape
+
+- One `Web Service` for this app
+- One `Postgres` database
+
+## Production start
+
+- Build command: `npm install && npm run build`
+- Start command: `npm start`

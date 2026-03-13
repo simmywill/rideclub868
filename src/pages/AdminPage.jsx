@@ -1,12 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  formatDateLabel,
-  getDailyAvailability,
-} from "../lib/bookingData";
+  clearAdminBooking,
+  getAdminBookings,
+  getAdminSession,
+  getAdminSettings,
+  signInAdmin,
+  signOutAdmin,
+  updateAdminBookingStatus,
+  updateAdminSettings,
+} from "../lib/api";
+import { DEFAULT_TOTAL_BIKES, formatDateLabel, getDailyAvailability } from "../lib/bookingData";
 
 function BookingStatusBadge({ status }) {
   const styles = {
@@ -22,20 +27,18 @@ function BookingStatusBadge({ status }) {
   );
 }
 
-export default function AdminPage({
-  bookings,
-  isSignedIn,
-  onSignIn,
-  onSignOut,
-  onUpdateBookingStatus,
-  onClearBooking,
-  totalBikes,
-  onUpdateTotalBikes,
-}) {
+export default function AdminPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [signInError, setSignInError] = useState("");
   const [bookingToClear, setBookingToClear] = useState(null);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [bookings, setBookings] = useState([]);
+  const [totalBikes, setTotalBikes] = useState(DEFAULT_TOTAL_BIKES);
+  const [inventoryInput, setInventoryInput] = useState(String(DEFAULT_TOTAL_BIKES));
+  const [pageError, setPageError] = useState("");
+  const [isLoadingPage, setIsLoadingPage] = useState(true);
+  const [isSavingInventory, setIsSavingInventory] = useState(false);
 
   const bookingsByDate = useMemo(() => {
     const uniqueDates = [...new Set(bookings.map((booking) => booking.rentalDate))].sort();
@@ -56,25 +59,135 @@ export default function AdminPage({
     [bookings]
   );
 
-  function handleSubmit(event) {
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadSession() {
+      try {
+        const sessionPayload = await getAdminSession();
+
+        if (ignore) {
+          return;
+        }
+
+        setIsSignedIn(Boolean(sessionPayload.authenticated));
+
+        if (sessionPayload.authenticated) {
+          await loadAdminData();
+        }
+      } catch (error) {
+        if (!ignore) {
+          setPageError(error.message || "Unable to load admin session.");
+        }
+      } finally {
+        if (!ignore) {
+          setIsLoadingPage(false);
+        }
+      }
+    }
+
+    loadSession();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  async function loadAdminData() {
+    const [bookingsPayload, settingsPayload] = await Promise.all([
+      getAdminBookings(),
+      getAdminSettings(),
+    ]);
+
+    setBookings(bookingsPayload.bookings || []);
+    setTotalBikes(settingsPayload.totalBikes || DEFAULT_TOTAL_BIKES);
+    setInventoryInput(String(settingsPayload.totalBikes || DEFAULT_TOTAL_BIKES));
+    setPageError("");
+  }
+
+  async function handleSubmit(event) {
     event.preventDefault();
 
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    try {
+      await signInAdmin({ username, password });
       setSignInError("");
-      onSignIn();
+      setIsSignedIn(true);
+      setIsLoadingPage(true);
+      await loadAdminData();
+    } catch (error) {
+      setSignInError(error.message || "Unable to sign in.");
+    } finally {
+      setIsLoadingPage(false);
+    }
+  }
+
+  async function handleSignOut() {
+    await signOutAdmin();
+    setIsSignedIn(false);
+    setBookings([]);
+    setUsername("");
+    setPassword("");
+  }
+
+  async function handleUpdateStatus(bookingId, nextStatus) {
+    try {
+      const payload = await updateAdminBookingStatus(bookingId, nextStatus);
+      setBookings((currentBookings) =>
+        currentBookings.map((booking) =>
+          booking.id === bookingId ? payload.booking : booking
+        )
+      );
+    } catch (error) {
+      setPageError(error.message || "Unable to update booking status.");
+    }
+  }
+
+  async function handleSaveInventory() {
+    const normalizedTotalBikes = Number(inventoryInput);
+
+    if (!Number.isInteger(normalizedTotalBikes) || normalizedTotalBikes <= 0) {
+      setPageError("Total bikes must be a positive whole number.");
       return;
     }
 
-    setSignInError("Incorrect username or password.");
+    try {
+      setIsSavingInventory(true);
+      const payload = await updateAdminSettings({ totalBikes: normalizedTotalBikes });
+      setTotalBikes(payload.totalBikes);
+      setInventoryInput(String(payload.totalBikes));
+      setPageError("");
+    } catch (error) {
+      setPageError(error.message || "Unable to update total bikes.");
+    } finally {
+      setIsSavingInventory(false);
+    }
   }
 
-  function handleConfirmClearBooking() {
+  async function handleConfirmClearBooking() {
     if (!bookingToClear) {
       return;
     }
 
-    onClearBooking(bookingToClear.id);
-    setBookingToClear(null);
+    try {
+      await clearAdminBooking(bookingToClear.id);
+      setBookings((currentBookings) =>
+        currentBookings.filter((booking) => booking.id !== bookingToClear.id)
+      );
+      setBookingToClear(null);
+      setPageError("");
+    } catch (error) {
+      setPageError(error.message || "Unable to clear booking.");
+    }
+  }
+
+  if (isLoadingPage && !isSignedIn) {
+    return (
+      <main className="min-h-screen bg-[linear-gradient(135deg,#082f49_0%,#14532d_52%,#fef3c7_100%)] px-6 py-10 sm:px-10 lg:px-16">
+        <div className="mx-auto max-w-md rounded-[2rem] border border-white/20 bg-white/15 p-6 text-white shadow-2xl backdrop-blur-2xl sm:p-8">
+          <div className="text-sm">Loading admin portal...</div>
+        </div>
+      </main>
+    );
   }
 
   if (!isSignedIn) {
@@ -154,13 +267,19 @@ export default function AdminPage({
             </Link>
             <button
               type="button"
-              onClick={onSignOut}
+              onClick={handleSignOut}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white"
             >
               Sign out
             </button>
           </div>
         </header>
+
+        {pageError ? (
+          <div className="mt-6 rounded-2xl border border-red-200 bg-white/80 px-4 py-3 text-sm text-red-700">
+            {pageError}
+          </div>
+        ) : null}
 
         <section className="mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-6">
@@ -176,11 +295,20 @@ export default function AdminPage({
                 <input
                   type="number"
                   min="1"
-                  value={totalBikes}
-                  onChange={(event) => onUpdateTotalBikes(event.target.value)}
+                  value={inventoryInput}
+                  onChange={(event) => setInventoryInput(event.target.value)}
                   className="w-full rounded-2xl border border-emerald-700/10 bg-white/85 px-4 py-3 text-base text-slate-900 outline-none"
                 />
               </label>
+
+              <button
+                type="button"
+                onClick={handleSaveInventory}
+                disabled={isSavingInventory}
+                className="mt-4 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-200"
+              >
+                Save total bikes
+              </button>
             </div>
 
             <div className="rounded-[2rem] border border-white/40 bg-white/60 p-6 shadow-lg backdrop-blur-xl">
@@ -272,7 +400,7 @@ export default function AdminPage({
                     <div className="mt-5 flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() => onUpdateBookingStatus(booking.id, "confirmed")}
+                        onClick={() => handleUpdateStatus(booking.id, "confirmed")}
                         disabled={booking.status === "confirmed"}
                         className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-200"
                       >
@@ -280,7 +408,7 @@ export default function AdminPage({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onUpdateBookingStatus(booking.id, "denied")}
+                        onClick={() => handleUpdateStatus(booking.id, "denied")}
                         disabled={booking.status === "denied"}
                         className="rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-red-200"
                       >

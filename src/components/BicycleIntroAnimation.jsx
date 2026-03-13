@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import BookingHomepagePanel from "./BookingHomepagePanel";
 
-export default function BicycleIntroAnimation({ bookings, totalBikes, onCreateBooking }) {
+export default function BicycleIntroAnimation() {
   const [showIntro, setShowIntro] = useState(true);
 
   useEffect(() => {
@@ -289,12 +289,7 @@ export default function BicycleIntroAnimation({ bookings, totalBikes, onCreateBo
             </div>
           </motion.section>
         ) : (
-          <BookingHomepagePanel
-            key="homepage"
-            bookings={bookings}
-            totalBikes={totalBikes}
-            onCreateBooking={onCreateBooking}
-          />
+          <BookingHomepagePanel key="homepage" />
         )}
       </AnimatePresence>
     </div>

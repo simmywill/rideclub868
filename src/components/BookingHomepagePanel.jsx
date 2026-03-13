@@ -1,12 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { createBooking, getAvailability } from "../lib/api";
 import {
+  DEFAULT_TOTAL_BIKES,
   MONTH_NAMES,
   WEEK_DAYS,
   formatDateLabel,
   formatDateValue,
   getCalendarDays,
-  getDailyAvailability,
 } from "../lib/bookingData";
 
 function BookingDayCell({ day, isSelected, availability, onSelect }) {
@@ -72,7 +73,7 @@ function BookingDayCell({ day, isSelected, availability, onSelect }) {
   );
 }
 
-export default function BookingHomepagePanel({ bookings, totalBikes, onCreateBooking }) {
+export default function BookingHomepagePanel() {
   const today = useMemo(() => {
     const nextToday = new Date();
     nextToday.setHours(0, 0, 0, 0);
@@ -81,23 +82,71 @@ export default function BookingHomepagePanel({ bookings, totalBikes, onCreateBoo
 
   const [showBookingSuccess, setShowBookingSuccess] = useState(false);
   const [bookingError, setBookingError] = useState("");
+  const [loadingAvailability, setLoadingAvailability] = useState(true);
+  const [totalBikes, setTotalBikes] = useState(DEFAULT_TOTAL_BIKES);
+  const [availabilityByDate, setAvailabilityByDate] = useState({});
   const [selectedRentalDate, setSelectedRentalDate] = useState(() => formatDateValue(today));
   const [activeMonth, setActiveMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
-  const [bicycleType, setBicycleType] = useState("City Bicycle");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [pickupSlot, setPickupSlot] = useState("8:00 AM");
 
   const calendarDays = useMemo(() => getCalendarDays(activeMonth), [activeMonth]);
+  const monthValue = `${activeMonth.getFullYear()}-${String(activeMonth.getMonth() + 1).padStart(2, "0")}`;
   const quantityNumber = Number(quantity || 0);
-  const selectedDayAvailability = getDailyAvailability(bookings, selectedRentalDate, totalBikes);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadAvailability() {
+      setLoadingAvailability(true);
+
+      try {
+        const payload = await getAvailability(monthValue);
+
+        if (ignore) {
+          return;
+        }
+
+        setTotalBikes(payload.totalBikes);
+        setAvailabilityByDate(payload.availabilityByDate || {});
+        setBookingError("");
+      } catch (error) {
+        if (!ignore) {
+          setBookingError(error.message || "Unable to load calendar availability.");
+        }
+      } finally {
+        if (!ignore) {
+          setLoadingAvailability(false);
+        }
+      }
+    }
+
+    loadAvailability();
+
+    return () => {
+      ignore = true;
+    };
+  }, [monthValue]);
+
+  function getAvailabilityForDate(dateValue) {
+    return (
+      availabilityByDate[dateValue] || {
+        availableBikes: totalBikes,
+        reservedBikes: 0,
+        isFullyBooked: totalBikes === 0,
+      }
+    );
+  }
+
+  const selectedDayAvailability = getAvailabilityForDate(selectedRentalDate);
   const hasEnoughCapacity =
     Number.isFinite(quantityNumber) &&
     quantityNumber > 0 &&
     quantityNumber <= selectedDayAvailability.availableBikes;
 
-  function handleCreateBookingRequest() {
+  async function handleCreateBookingRequest() {
     if (!email.trim() || !phone.trim()) {
       setBookingError("Please enter your email address and phone number.");
       return;
@@ -108,22 +157,28 @@ export default function BookingHomepagePanel({ bookings, totalBikes, onCreateBoo
       return;
     }
 
-    onCreateBooking({
-      rentalDate: selectedRentalDate,
-      bicycleType,
-      email: email.trim(),
-      phone: phone.trim(),
-      quantity: quantityNumber,
-      pickupSlot,
-    });
+    try {
+      await createBooking({
+        rentalDate: selectedRentalDate,
+        bicycleType: "Bicycle Rental",
+        email: email.trim(),
+        phone: phone.trim(),
+        quantity: quantityNumber,
+        pickupSlot,
+      });
 
-    setBookingError("");
-    setShowBookingSuccess(true);
-    setEmail("");
-    setPhone("");
-    setQuantity("1");
-    setPickupSlot("8:00 AM");
-    setBicycleType("City Bicycle");
+      const refreshedAvailability = await getAvailability(monthValue);
+      setTotalBikes(refreshedAvailability.totalBikes);
+      setAvailabilityByDate(refreshedAvailability.availabilityByDate || {});
+      setBookingError("");
+      setShowBookingSuccess(true);
+      setEmail("");
+      setPhone("");
+      setQuantity("1");
+      setPickupSlot("8:00 AM");
+    } catch (error) {
+      setBookingError(error.message || "Unable to create booking.");
+    }
   }
 
   return (
@@ -139,7 +194,6 @@ export default function BookingHomepagePanel({ bookings, totalBikes, onCreateBoo
         <div className="absolute left-[8%] top-[10%] h-56 w-56 rounded-full bg-yellow-300/20 blur-3xl" />
         <div className="absolute right-[8%] top-[14%] h-64 w-64 rounded-full bg-orange-200/20 blur-3xl" />
         <div className="absolute bottom-[18%] left-[20%] h-56 w-56 rounded-full bg-lime-300/15 blur-3xl" />
-
         <div className="absolute left-[6%] top-[9%] h-24 w-24 rounded-full bg-yellow-200/85 shadow-[0_0_120px_rgba(253,224,71,0.8)]" />
 
         <div className="absolute right-[8%] top-[18%] opacity-70">
@@ -242,7 +296,7 @@ export default function BookingHomepagePanel({ bookings, totalBikes, onCreateBoo
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <div className="text-lg font-semibold text-slate-800">Book Your Ride</div>
-                  <div className="text-sm text-slate-600">Select date, bicycle type, and quantity</div>
+                  <div className="text-sm text-slate-600">Select date, quantity, and contact details</div>
                 </div>
                 <div className="rounded-full border border-emerald-600/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-700">
                   {selectedDayAvailability.availableBikes} bikes left on selected day
@@ -309,7 +363,7 @@ export default function BookingHomepagePanel({ bookings, totalBikes, onCreateBoo
                       }
 
                       const dateKey = formatDateValue(day);
-                      const availability = getDailyAvailability(bookings, dateKey, totalBikes);
+                      const availability = getAvailabilityForDate(dateKey);
 
                       return (
                         <BookingDayCell
@@ -411,10 +465,16 @@ export default function BookingHomepagePanel({ bookings, totalBikes, onCreateBoo
                     </div>
                   ) : null}
 
+                  {loadingAvailability ? (
+                    <div className="rounded-2xl border border-emerald-700/10 bg-white/80 px-4 py-3 text-sm text-slate-600">
+                      Loading current availability...
+                    </div>
+                  ) : null}
+
                   <button
                     type="button"
                     onClick={handleCreateBookingRequest}
-                    disabled={!hasEnoughCapacity}
+                    disabled={!hasEnoughCapacity || loadingAvailability}
                     className="w-full rounded-2xl bg-emerald-500 px-5 py-3.5 text-sm font-semibold text-white transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:bg-emerald-200"
                   >
                     Make Booking
